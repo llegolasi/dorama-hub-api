@@ -9,18 +9,25 @@ const app = new Hono();
 // Enable CORS for all routes
 app.use("*", cors());
 
-// Mount tRPC router at /api/trpc
-app.use(
-  "/api/trpc/*",
+// Health check at the root
+app.get("/", (c) => {
+  return c.json({ status: "ok", message: "API is running" });
+});
+
+// Create a sub-app for all /api routes
+const api = new Hono();
+
+// Mount the tRPC server on the /trpc path of the sub-app
+api.use(
+  "/trpc/*",
   trpcServer({
     router: appRouter,
     createContext,
   })
 );
 
-// Simple health check endpoint at the root
-app.get("/", (c) => {
-  return c.json({ status: "ok", message: "API is running" });
-});
+// Mount the sub-app on the main app.
+// This will handle all requests to /api/*
+app.route("/api", api);
 
 export default app;
