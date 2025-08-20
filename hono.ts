@@ -14,20 +14,13 @@ app.get("/", (c) => {
   return c.json({ status: "ok", message: "API is running" });
 });
 
-// Create a sub-app for all /api routes
-const api = new Hono();
-
-// Mount the tRPC server on the /trpc path of the sub-app
-api.use(
-  "/trpc/*",
+// Mount tRPC router directly with the full expected path
+app.use(
+  "/api/trpc/*",
   trpcServer({
     router: appRouter,
     createContext,
   })
 );
-
-// Mount the sub-app on the main app.
-// This will handle all requests to /api/*
-app.route("/api", api);
 
 export default app;
