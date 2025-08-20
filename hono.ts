@@ -4,23 +4,21 @@ import { cors } from "hono/cors";
 import { appRouter } from "./trpc/app-router";
 import { createContext } from "./trpc/create-context";
 
-// A Vercel vai enviar todos os pedidos para cá.
-// Vamos criar a rota base /api aqui.
-const app = new Hono().basePath('/api');
+const app = new Hono();
 
 // Enable CORS for all routes
 app.use("*", cors());
 
-// Agora, esta rota vai corresponder a /api/trpc/*
+// Mount tRPC router at /api/trpc
 app.use(
-  "/trpc/*",
+  "/api/trpc/*",
   trpcServer({
     router: appRouter,
     createContext,
   })
 );
 
-// Rota de verificação de saúde, acessível em /api/
+// Simple health check endpoint at the root
 app.get("/", (c) => {
   return c.json({ status: "ok", message: "API is running" });
 });
