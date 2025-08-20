@@ -20,6 +20,7 @@ app.use(
   trpcServer({
     router: appRouter,
     createContext,
+    endpoint: "/api/trpc", // <-- ESTA É A CORREÇÃO CRUCIAL
   })
 );
 
