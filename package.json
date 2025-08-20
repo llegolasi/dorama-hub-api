@@ -5,7 +5,8 @@
   "scripts": {
     "start": "bunx rork start -p 2vj4p926y5ajxa5kim2bk --tunnel",
     "start-web": "bunx rork start -p 2vj4p926y5ajxa5kim2bk --web --tunnel",
-    "start-web-dev": "DEBUG=expo* bunx rork start -p 2vj4p926y5ajxa5kim2bk --web --tunnel"
+    "start-web-dev": "DEBUG=expo* bunx rork start -p 2vj4p926y5ajxa5kim2bk --web --tunnel",
+    "build": "bun build ./backend/hono.ts --outdir ./backend/dist"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -51,7 +52,7 @@
     "react-native-view-shot": "4.0.3",
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
-    "superjson": "^2.2.2",
+    "superjson": "^1.13.3",
     "zod": "^4.0.14",
     "zustand": "^5.0.2"
   },
