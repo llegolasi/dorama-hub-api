@@ -11,7 +11,8 @@ import {
   deletePostCommentProcedure,
   togglePostCommentLikeProcedure,
   getNewsPostsProcedure,
-  getNewsPostByIdProcedure
+  getNewsPostByIdProcedure,
+  deletePostProcedure
 } from "./routes/community/posts/route";
 
 // News comments routes
@@ -33,7 +34,8 @@ import {
   toggleRankingLikeProcedure,
   addRankingCommentProcedure,
   deleteRankingCommentProcedure,
-  toggleRankingCommentLikeProcedure
+  toggleRankingCommentLikeProcedure,
+  deleteRankingProcedure
 } from "./routes/rankings/route";
 
 // Users routes
@@ -49,7 +51,10 @@ import {
   getUserStatsProcedure,
   updateUserStatsProcedure,
   markEpisodeWatchedProcedure,
-  completeDramaWithDateRangeProcedure
+  completeDramaWithDateRangeProcedure,
+  updateUserProfileCoverProcedure,
+  checkUserPremiumStatusProcedure,
+  getProfileAvatarsProcedure
 } from "./routes/users/route";
 
 // Discover routes
@@ -85,7 +90,8 @@ import {
   getPopularDramas,
   getTrendingDramas,
   syncSeriesCache,
-  cleanupCache
+  cleanupCache,
+  getDramaProviders
 } from "./routes/dramas/cache/route";
 
 export const appRouter = createTRPCRouter({
@@ -101,6 +107,7 @@ export const appRouter = createTRPCRouter({
     addPostComment: addPostCommentProcedure,
     deletePostComment: deletePostCommentProcedure,
     togglePostCommentLike: togglePostCommentLikeProcedure,
+    deletePost: deletePostProcedure,
   }),
   
   news: createTRPCRouter({
@@ -123,6 +130,7 @@ export const appRouter = createTRPCRouter({
     addRankingComment: addRankingCommentProcedure,
     deleteRankingComment: deleteRankingCommentProcedure,
     toggleRankingCommentLike: toggleRankingCommentLikeProcedure,
+    deleteRanking: deleteRankingProcedure,
   }),
   
   users: createTRPCRouter({
@@ -138,6 +146,9 @@ export const appRouter = createTRPCRouter({
     updateStats: updateUserStatsProcedure,
     markEpisodeWatched: markEpisodeWatchedProcedure,
     completeDramaWithDateRange: completeDramaWithDateRangeProcedure,
+    updateProfileCover: updateUserProfileCoverProcedure,
+    checkPremiumStatus: checkUserPremiumStatusProcedure,
+    getProfileAvatars: getProfileAvatarsProcedure,
   }),
   
   discover: createTRPCRouter({
@@ -174,6 +185,7 @@ export const appRouter = createTRPCRouter({
     getTrending: getTrendingDramas,
     syncCache: syncSeriesCache,
     cleanupCache: cleanupCache,
+    getProviders: getDramaProviders,
   }),
 });
 

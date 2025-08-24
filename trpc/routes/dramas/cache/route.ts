@@ -35,8 +35,9 @@ const normalizePath = (p: unknown): string | null => {
   return p.startsWith('/') ? p : `/${p}`;
 };
 
-// Função auxiliar para buscar do TMDb
-async function fetchFromTMDb(endpoint: string) {
+// Função auxiliar para buscar do TMDb com timeout e retry
+async function fetchFromTMDb(endpoint: string, retryCount: number = 0) {
+  const maxRetries = 2;
   const url = new URL(`${TMDB_BASE_URL}${endpoint}`);
   if (!url.searchParams.has('language')) {
     url.searchParams.set('language', 'pt-BR');
@@ -51,14 +52,47 @@ async function fetchFromTMDb(endpoint: string) {
     }
   }
 
-  const response = await fetch(url.toString(), { headers });
+  // Create AbortController with timeout
+  const controller = new AbortController();
+  const timeoutDuration = 8000 + (retryCount * 3000); // 8s, 11s, 14s
+  const timeoutId = setTimeout(() => {
+    console.log(`[CACHE] Timeout triggered for ${endpoint} after ${timeoutDuration}ms`);
+    controller.abort();
+  }, timeoutDuration);
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`TMDb API error: ${response.status} ${text}`);
+  try {
+    const response = await fetch(url.toString(), { 
+      headers,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`TMDb API error: ${response.status} ${text}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    
+    // Handle AbortError with retry
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.warn(`[CACHE] Request timeout for ${endpoint} (attempt ${retryCount + 1})`);
+      
+      if (retryCount < maxRetries) {
+        console.log(`[CACHE] Retrying ${endpoint} in ${1000 * (retryCount + 1)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+        return fetchFromTMDb(endpoint, retryCount + 1);
+      } else {
+        console.error(`[CACHE] Max retries exceeded for ${endpoint}`);
+        throw new Error(`Request timeout after ${maxRetries + 1} attempts`);
+      }
+    }
+    
+    throw error;
   }
-
-  return response.json();
 }
 
 // Função para verificar se série existe no cache
@@ -979,5 +1013,51 @@ export const cleanupCache = protectedProcedure
     } catch (error) {
       console.error('Erro na limpeza:', error);
       throw new Error('Erro ao limpar cache');
+    }
+  });
+
+// Procedure para buscar streaming providers
+export const getDramaProviders = publicProcedure
+  .input(z.object({ id: z.number() }))
+  .query(async ({ input }: { input: { id: number } }) => {
+    const { id } = input;
+    
+    try {
+      console.log(`[PROVIDERS] Buscando providers para drama ${id}`);
+      
+      // Buscar providers do TMDb
+      const data = await fetchFromTMDb(`/tv/${id}/watch/providers`);
+      console.log(`[PROVIDERS] TMDb retornou providers:`, Object.keys(data.results || {}));
+      
+      // Focar no Brasil (BR) primeiro, depois outros países
+      const brProviders = data.results?.BR;
+      const usProviders = data.results?.US;
+      const providers = brProviders || usProviders || {};
+      
+      console.log(`[PROVIDERS] Providers encontrados:`, {
+        flatrate: providers.flatrate?.length || 0,
+        rent: providers.rent?.length || 0,
+        buy: providers.buy?.length || 0
+      });
+      
+      // Retornar providers organizados por tipo
+      return {
+        country: brProviders ? 'BR' : (usProviders ? 'US' : null),
+        flatrate: providers.flatrate || [], // Streaming (Netflix, Prime Video, etc.)
+        rent: providers.rent || [], // Aluguel
+        buy: providers.buy || [], // Compra
+        link: providers.link || null
+      };
+      
+    } catch (error) {
+      console.error(`[PROVIDERS] Erro ao buscar providers para drama ${id}:`, error);
+      // Retornar vazio em caso de erro
+      return {
+        country: null,
+        flatrate: [],
+        rent: [],
+        buy: [],
+        link: null
+      };
     }
   });

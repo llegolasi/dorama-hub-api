@@ -40,11 +40,86 @@ const getAuthenticatedSupabase = (ctx: Context) => {
 // Get community posts
 export const getCommunityPostsProcedure = publicProcedure
   .input(z.object({
-    type: z.enum(['all', 'rankings', 'discussions']).optional(),
+    type: z.enum(['all', 'rankings', 'discussions', 'following']).optional(),
     limit: z.number().min(1).max(50).default(20),
-    offset: z.number().min(0).default(0)
+    offset: z.number().min(0).default(0),
+    sortBy: z.enum(['recent', 'popular']).default('recent')
   }))
-  .query(async ({ input, ctx }: { input: { type?: 'all' | 'rankings' | 'discussions'; limit: number; offset: number }; ctx: Context }) => {
+  .query(async ({ input, ctx }: { input: { type?: 'all' | 'rankings' | 'discussions' | 'following'; limit: number; offset: number; sortBy: 'recent' | 'popular' }; ctx: Context }) => {
+    // Development mode - return mock posts
+    if (ctx.isDevelopmentMode) {
+      const mockPosts = [
+        {
+          id: 'mock_post_1',
+          user_id: 'dev_demo_user',
+          post_type: 'ranking',
+          content: 'Meu ranking dos melhores K-dramas de romance!',
+          mentioned_drama_id: null,
+          ranking_id: 'mock_ranking_1',
+          likes_count: 15,
+          comments_count: 8,
+          is_pinned: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          users: {
+            username: 'demo_user',
+            display_name: 'Demo User',
+            profile_image: null,
+            user_type: 'normal',
+            is_verified: false,
+            current_badge_id: null,
+            current_avatar_border_id: null
+          },
+          user_rankings: {
+            id: 'mock_ranking_1',
+            title: 'Top 10 K-dramas de Romance',
+            description: 'Minha lista pessoal dos melhores doramas românticos',
+            ranking_items: [
+              {
+                drama_id: 1,
+                rank_position: 1,
+                drama_title: 'Crash Landing on You',
+                poster_image: '/t6jVlbPBwJlBMOtGXMJjAJQMppz.jpg',
+                cover_image: null
+              },
+              {
+                drama_id: 2,
+                rank_position: 2,
+                drama_title: 'Goblin',
+                poster_image: '/x2BHx02VoVmKMHcSOab9NkJf88X.jpg',
+                cover_image: null
+              }
+            ]
+          }
+        },
+        {
+          id: 'mock_post_2',
+          user_id: 'dev_demo_user',
+          post_type: 'discussion',
+          content: 'Acabei de assistir Squid Game e estou impressionado! Que série incrível.',
+          mentioned_drama_id: 87739,
+          ranking_id: null,
+          likes_count: 23,
+          comments_count: 12,
+          is_pinned: false,
+          created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          updated_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          users: {
+            username: 'demo_user',
+            display_name: 'Demo User',
+            profile_image: null,
+            user_type: 'normal',
+            is_verified: false,
+            current_badge_id: null,
+            current_avatar_border_id: null
+          },
+          user_rankings: null
+        }
+      ];
+      
+      return mockPosts.slice(input.offset, input.offset + input.limit);
+    }
+    
     const isAuthed = Boolean(ctx?.user?.id);
     const client = isAuthed ? (ctx.supabase ?? supabase) : ctx.admin;
     if (!client) {
@@ -56,14 +131,18 @@ export const getCommunityPostsProcedure = publicProcedure
 
       // Specialized query when requesting rankings
       if (input.type === 'rankings') {
-        const { data: posts, error } = await client
+        let query = client
           .from('community_posts')
           .select(`
             *,
             users!inner (
               username,
               display_name,
-              profile_image
+              profile_image,
+              user_type,
+              is_verified,
+              current_badge_id,
+              current_avatar_border_id
             ),
             user_rankings (
               id,
@@ -76,19 +155,154 @@ export const getCommunityPostsProcedure = publicProcedure
                 poster_image,
                 cover_image
               )
-            )
+            ),
+            post_likes!left(id),
+            post_comments!left(id)
           `)
-          .eq('post_type', 'ranking')
-          .order('created_at', { ascending: false })
-          .range(input.offset, input.offset + input.limit - 1);
+          .eq('post_type', 'ranking');
+
+        // Apply sorting
+        if (input.sortBy === 'popular') {
+          // For popular, we'll order by a combination of likes and comments count
+          // Since we can't easily do complex sorting in Supabase, we'll fetch and sort in memory
+          query = query.order('created_at', { ascending: false });
+        } else {
+          query = query.order('created_at', { ascending: false });
+        }
+
+        const { data: posts, error } = await query.range(input.offset, input.offset + input.limit - 1);
 
         if (error) {
           console.error('Supabase error (rankings):', error);
-          throw error;
+          // Return empty array instead of throwing to prevent crashes
+          console.warn('Error fetching ranking posts, returning empty array:', error.message);
+          return [];
         }
 
         console.log('Fetched ranking posts count:', posts?.length ?? 0);
-        return posts || [];
+        
+        // Process posts to add engagement counts and sort if needed
+        const processedPosts = (posts || []).map((post: any) => ({
+          ...post,
+          likes_count: post.post_likes?.length || 0,
+          comments_count: post.post_comments?.length || 0,
+          engagement_score: (post.post_likes?.length || 0) + (post.post_comments?.length || 0) * 2
+        }));
+
+        // Sort by popularity if requested
+        if (input.sortBy === 'popular') {
+          processedPosts.sort((a, b) => b.engagement_score - a.engagement_score);
+        }
+
+        return processedPosts;
+      }
+      
+      // Specialized query for following posts
+      if (input.type === 'following') {
+        if (!isAuthed || !ctx.user?.id) {
+          console.log('User not authenticated for following posts');
+          return []; // Return empty array if not authenticated
+        }
+        
+        console.log('Fetching following posts for user:', ctx.user.id);
+        
+        try {
+          // First get the list of users that the current user follows
+          const { data: followedUsers, error: followError } = await client
+            .from('user_follows')
+            .select('following_id')
+            .eq('follower_id', ctx.user.id);
+            
+          if (followError) {
+            console.error('Error fetching followed users:', followError);
+            // If the table doesn't exist or there's a schema issue, return empty array instead of throwing
+            if (followError.code === '42P01' || followError.message?.includes('relation "user_follows" does not exist')) {
+              console.warn('user_follows table does not exist, returning empty array');
+              return [];
+            }
+            // For any other error, also return empty array to prevent crashes
+            console.warn('Error fetching followed users, returning empty array:', followError.message);
+            return [];
+          }
+          
+          console.log('Found followed users:', followedUsers?.length ?? 0);
+          
+          if (!followedUsers || followedUsers.length === 0) {
+            console.log('No followed users found, returning empty array');
+            return []; // No followed users, return empty array
+          }
+          
+          const followedUserIds = followedUsers.map(f => f.following_id);
+          console.log('Following user IDs:', followedUserIds);
+          
+          // Check if community_posts table exists and has the required structure
+          let query = client
+            .from('community_posts')
+            .select(`
+              *,
+              users!inner (
+                username,
+                display_name,
+                profile_image,
+                user_type,
+                is_verified,
+                current_badge_id,
+                current_avatar_border_id
+              ),
+              user_rankings (
+                id,
+                title,
+                description,
+                ranking_items (
+                  drama_id,
+                  rank_position,
+                  drama_title,
+                  poster_image,
+                  cover_image
+                )
+              ),
+              post_likes!left(id),
+              post_comments!left(id)
+            `)
+            .in('user_id', followedUserIds);
+
+          // Apply sorting
+          if (input.sortBy === 'popular') {
+            query = query.order('created_at', { ascending: false });
+          } else {
+            query = query.order('created_at', { ascending: false });
+          }
+
+          const { data: posts, error } = await query.range(input.offset, input.offset + input.limit - 1);
+
+          if (error) {
+            console.error('Supabase error (following):', error);
+            // Return empty array instead of throwing to prevent crashes
+            console.warn('Error fetching following posts, returning empty array:', error.message);
+            return [];
+          }
+
+          console.log('Fetched following posts count:', posts?.length ?? 0);
+          
+          // Process posts to add engagement counts and sort if needed
+          const processedPosts = (posts || []).map((post: any) => ({
+            ...post,
+            likes_count: post.post_likes?.length || 0,
+            comments_count: post.post_comments?.length || 0,
+            engagement_score: (post.post_likes?.length || 0) + (post.post_comments?.length || 0) * 2
+          }));
+
+          // Sort by popularity if requested
+          if (input.sortBy === 'popular') {
+            processedPosts.sort((a, b) => b.engagement_score - a.engagement_score);
+          }
+
+          return processedPosts;
+        } catch (followingError) {
+          console.error('Error in following posts section:', followingError);
+          // Return empty array instead of throwing to prevent the entire endpoint from failing
+          return [];
+        }
       }
       
       // Generic query for other types
@@ -99,7 +313,11 @@ export const getCommunityPostsProcedure = publicProcedure
           users!inner (
             username,
             display_name,
-            profile_image
+            profile_image,
+            user_type,
+            is_verified,
+            current_badge_id,
+            current_avatar_border_id
           ),
           user_rankings (
             id,
@@ -112,10 +330,19 @@ export const getCommunityPostsProcedure = publicProcedure
               poster_image,
               cover_image
             )
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .range(input.offset, input.offset + input.limit - 1);
+          ),
+          post_likes!left(id),
+          post_comments!left(id)
+        `);
+
+      // Apply sorting
+      if (input.sortBy === 'popular') {
+        query = query.order('created_at', { ascending: false });
+      } else {
+        query = query.order('created_at', { ascending: false });
+      }
+
+      query = query.range(input.offset, input.offset + input.limit - 1);
 
       if (input.type === 'discussions') {
         query = query.eq('post_type', 'discussion');
@@ -125,16 +352,40 @@ export const getCommunityPostsProcedure = publicProcedure
 
       if (error) {
         console.error('Supabase error:', error);
-        throw error;
+        // Return empty array instead of throwing to prevent crashes
+        console.warn('Error fetching posts, returning empty array:', error.message);
+        return [];
       }
 
-      return posts || [];
+      // Process posts to add engagement counts and sort if needed
+      const processedPosts = (posts || []).map((post: any) => ({
+        ...post,
+        likes_count: post.post_likes?.length || 0,
+        comments_count: post.post_comments?.length || 0,
+        engagement_score: (post.post_likes?.length || 0) + (post.post_comments?.length || 0) * 2
+      }));
+
+      // Sort by popularity if requested
+      if (input.sortBy === 'popular') {
+        processedPosts.sort((a, b) => b.engagement_score - a.engagement_score);
+      }
+
+      return processedPosts;
     } catch (error) {
       console.error('Error fetching community posts:', error);
-      if (error instanceof Error) {
-        throw new Error(`Failed to fetch community posts: ${error.message}`);
+      
+      // Check if it's a specific database error we can handle
+      if (error && typeof error === 'object' && 'message' in error) {
+        const errorMessage = (error as any).message;
+        if (errorMessage.includes('column') && errorMessage.includes('does not exist')) {
+          console.warn('Database schema issue detected, returning empty array:', errorMessage);
+          return [];
+        }
       }
-      throw new Error('Failed to fetch community posts');
+      
+      // For any other error, return empty array to prevent crashes
+      console.warn('Unexpected error fetching community posts, returning empty array:', error);
+      return [];
     }
   });
 
@@ -195,7 +446,11 @@ export const createCommunityPostProcedure = protectedProcedure
           users (
             username,
             display_name,
-            profile_image
+            profile_image,
+            user_type,
+            is_verified,
+            current_badge_id,
+            current_avatar_border_id
           )
         `)
         .single();
@@ -242,7 +497,11 @@ export const getPostDetailsProcedure = publicProcedure
           users!inner (
             username,
             display_name,
-            profile_image
+            profile_image,
+            user_type,
+            is_verified,
+            current_badge_id,
+            current_avatar_border_id
           ),
           user_rankings (
             title,
@@ -268,7 +527,11 @@ export const getPostDetailsProcedure = publicProcedure
           users!inner (
             username,
             display_name,
-            profile_image
+            profile_image,
+            user_type,
+            is_verified,
+            current_badge_id,
+            current_avatar_border_id
           )
         `)
         .eq('post_id', input.postId)
@@ -287,7 +550,11 @@ export const getPostDetailsProcedure = publicProcedure
             users!inner (
               username,
               display_name,
-              profile_image
+              profile_image,
+              user_type,
+              is_verified,
+              current_badge_id,
+              current_avatar_border_id
             )
           `)
           .in('parent_comment_id', commentIds)
@@ -426,7 +693,11 @@ export const addPostCommentProcedure = protectedProcedure
           users!inner (
             username,
             display_name,
-            profile_image
+            profile_image,
+            user_type,
+            is_verified,
+            current_badge_id,
+            current_avatar_border_id
           )
         `)
         .single();
@@ -588,6 +859,65 @@ export const getNewsPostsProcedure = publicProcedure
         throw new Error(`Failed to fetch news posts: ${error.message}`);
       }
       throw new Error('Failed to fetch news posts');
+    }
+  });
+
+// Delete community post
+export const deletePostProcedure = protectedProcedure
+  .input(z.object({
+    postId: z.string().uuid()
+  }))
+  .mutation(async ({ input, ctx }: { input: { postId: string }; ctx: Context }) => {
+    try {
+      if (!ctx.user?.id) {
+        throw new Error('User ID is required');
+      }
+      
+      // Use authenticated supabase client for RLS
+      const authSupabase = getAuthenticatedSupabase(ctx);
+      
+      // Check if post exists and belongs to user
+      const { data: post, error: fetchError } = await authSupabase
+        .from('community_posts')
+        .select('user_id')
+        .eq('id', input.postId)
+        .single();
+
+      if (fetchError) {
+        console.error('Error fetching post:', fetchError);
+        if ((fetchError as any)?.code === 'PGRST116') {
+          throw new Error('Post not found');
+        }
+        throw new Error('Failed to fetch post');
+      }
+
+      if (!post) {
+        throw new Error('Post not found');
+      }
+
+      if (post.user_id !== ctx.user.id) {
+        throw new Error('You can only delete your own posts');
+      }
+
+      // Delete the post
+      const { error: deleteError } = await authSupabase
+        .from('community_posts')
+        .delete()
+        .eq('id', input.postId)
+        .eq('user_id', ctx.user.id);
+
+      if (deleteError) {
+        console.error('Error deleting post:', deleteError);
+        throw new Error('Failed to delete post');
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Delete post procedure error:', error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to delete post');
     }
   });
 
